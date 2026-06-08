@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>JENGA 3D</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { overflow: hidden; background: #0d0d0d; font-family: 'Georgia', serif; }
+  canvas { display: block; }
+
+  #ui {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    pointer-events: none;
+  }
+
+  #header {
+    position: absolute; top: 0; left: 0; right: 0;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 28px;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.85), transparent);
+  }
+
+  #title {
+    font-size: 32px; letter-spacing: 8px; color: #e8d5a3;
+    text-shadow: 0 0 40px rgba(232,213,163,0.4);
+    font-weight: normal;
+  }
+
+  #score-panel {
+    display: flex; gap: 32px; align-items: center;
+  }
+
+  .score-box {
+    text-align: center;
+  }
+  .score-label {
+    font-size: 10px; letter-spacing: 3px; color: #888; text-transform: uppercase;
+  }
+  .score-val {
+    font-size: 28px; color: #e8d5a3; font-weight: normal;
+    line-height: 1;
+  }
+
+  #turn-banner {
+    position: absolute; top: 90px; left: 50%; transform: translateX(-50%);
+    padding: 8px 28px;
+    border: 1px solid rgba(232,213,163,0.3);
+    background: rgba(0,0,0,0.6);
+    border-radius: 2px;
+    font-size: 13px; letter-spacing: 4px; color: #e8d5a3;
+    text-align: center;
+  }
+
+  #instructions {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    padding: 18px 28px 22px;
+    background: linear-gradient(to top, rgba(0,0,0,0.9), transparent);
+    display: flex; gap: 32px; justify-content: center; align-items: center;
+  }
+  .key {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; color: #888; letter-spacing: 1px;
+  }
+  .key kbd {
+    background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 3px; padding: 2px 7px; font-size: 11px; color: #bbb;
+    font-family: inherit;
+  }
+
+  #status-msg {
+    position: absolute; bottom: 70px; left: 50%; transform: translateX(-50%);
+    padding: 10px 24px;
+    background: rgba(0,0,0,0.75);
+    border: 1px solid rgba(232,213,163,0.25);
+    border-radius: 2px;
+    font-size: 13px; letter-spacing: 2px; color: #e8d5a3;
+    white-space: nowrap;
+    transition: opacity 0.4s;
+    pointer-events: none;
+  }
+
+  #phase-indicator {
+    position: absolute; top: 90px; right: 28px;
+    text-align: right;
+  }
+  .phase-dot {
+    display: inline-block; width: 8px; height: 8px;
+    border-radius: 50%; margin-left: 6px;
+    background: #333;
+    transition: background 0.3s;
+  }
+  .phase-dot.active { background: #e8d5a3; }
+
+  #gameover-screen {
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,0.88);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 18px;
+    pointer-events: all;
+    opacity: 0; transition: opacity 0.8s;
+  }
+  #gameover-screen.visible { opacity: 1; }
+  #gameover-title {
+    font-size: 64px; letter-spacing: 12px; color: #e8d5a3;
+    text-shadow: 0 0 60px rgba(232,213,163,0.5);
+  }
+  #gameover-sub {
+    font-size: 16px; letter-spacing: 4px; color: #888;
+  }
+  #gameover-btn {
+    margin-top: 20px;
+    padding: 14px 48px;
+    border: 1px solid rgba(232,213,163,0.5);
+    background: transparent;
+    color: #e8d5a3; font-family: 'Georgia', serif;
+    font-size: 14px; letter-spacing: 4px;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+  }
+  #gameover-btn:hover {
+    background: rgba(232,213,163,0.12);
+  }
+
+  #place-hint {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    pointer-events: none;
+    text-align: center;
+  }
+  .crosshair {
+    width: 32px; height: 32px;
+    border: 2px solid rgba(232,213,163,0.6);
+    border-radius: 50%;
+    margin: 0 auto 8px;
+    position: relative;
+  }
+  .crosshair::before, .crosshair::after {
+    content: ''; position: absolute;
+    background: rgba(232,213,163,0.6);
+  }
+  .crosshair::before { width: 1px; height: 12px; left: 50%; top: 50%; transform: translate(-50%,-50%); }
+  .crosshair::after { width: 12px; height: 1px; left: 50%; top: 50%; transform: translate(-50%,-50%); }
+</style>
+</head>
+<body>
+
+<div id="ui">
+  <div id="header">
+    <div id="title">JENGA</div>
+    <div id="score-panel">
+      <div class="score-box">
+        <div class="score-label">Tour</div>
+        <div class="score-val" id="val-niveau">1</div>
+      </div>
+      <div class="score-box">
+        <div class="score-label">Blocs retirés</div>
+        <div class="score-val" id="val-blocs">0</div>
+      </div>
+      <div class="score-box">
+        <div class="score-label">Joueur</div>
+        <div class="score-val" id="val-joueur">1</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="turn-banner" id="turn-info">EN ATTENTE</div>
+
+  <div id="status-msg" style="opacity:0">—</div>
+
+  <div id="gameover-screen">
+    <div id="gameover-title">TOMBÉE !</div>
+    <div id="gameover-sub" id="gameover-winner"></div>
+    <button id="gameover-btn" onclick="restartGame()">REJOUER</button>
+  </div>
+
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+  "cannon-es": "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js"
+}}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ─── RENDERER ────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+document.body.appendChild(renderer.domElement);
+
+// ─── SCENE ───────────────────────────────────────────────────────────────────
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x1a1008, 0.045);
+
+// ─── PHYSICS ─────────────────────────────────────────────────────────────────
+const world = new CANNON.World();
+world.gravity.set(0, -18, 0);
+world.broadphase = new CANNON.SAPBroadphase(world);
+world.allowSleep = true;
+
+const defaultMat = new CANNON.Material('default');
+const contactMat = new CANNON.ContactMaterial(defaultMat, defaultMat, {
+  friction: 0.55, restitution: 0.05
+});
+world.addContactMaterial(contactMat);
+
+// ─── CAMERA ──────────────────────────────────────────────────────────────────
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.05, 200);
+camera.position.set(0, 5, 12);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.target.set(0, 3, 0);
+controls.minDistance = 4;
+controls.maxDistance = 22;
+controls.minPolarAngle = 0.1;
+controls.maxPolarAngle = Math.PI * 0.52;
+controls.update();
+
+// ─── LIGHTING ────────────────────────────────────────────────────────────────
+scene.add(new THREE.AmbientLight(0xfff0dc, 0.35));
+
+const sunLight = new THREE.DirectionalLight(0xffe8c0, 1.8);
+sunLight.position.set(6, 14, 8);
+sunLight.castShadow = true;
+sunLight.shadow.mapSize.set(2048, 2048);
+sunLight.shadow.camera.near = 0.5;
+sunLight.shadow.camera.far = 50;
+sunLight.shadow.camera.left = -10;
+sunLight.shadow.camera.right = 10;
+sunLight.shadow.camera.top = 10;
+sunLight.shadow.camera.bottom = -10;
+sunLight.shadow.bias = -0.001;
+scene.add(sunLight);
+
+const fillLight = new THREE.PointLight(0x4466aa, 0.6, 30);
+fillLight.position.set(-5, 8, -3);
+scene.add(fillLight);
+
+const rimLight = new THREE.SpotLight(0xffd090, 0.8, 25, 0.5);
+rimLight.position.set(-4, 10, -6);
+scene.add(rimLight);
+
+// ─── ENVIRONMENT ─────────────────────────────────────────────────────────────
+
+// Floor
+const floorGeo = new THREE.PlaneGeometry(60, 60, 40, 40);
+const floorMat = new THREE.MeshStandardMaterial({
+  color: 0x2a1f0f, roughness: 0.95, metalness: 0
+});
+const floor = new THREE.Mesh(floorGeo, floorMat);
+floor.rotation.x = -Math.PI/2;
+floor.receiveShadow = true;
+scene.add(floor);
+
+const floorBody = new CANNON.Body({ mass: 0, material: defaultMat });
+floorBody.addShape(new CANNON.Plane());
+floorBody.quaternion.setFromEuler(-Math.PI/2, 0, 0);
+world.addBody(floorBody);
+
+// Table
+const TABLE_H = 1.0;
+const TABLE_TOP = TABLE_H + 0.08;
+const tableGeo = new THREE.BoxGeometry(5, 0.16, 5);
+const tableMat = new THREE.MeshStandardMaterial({ color: 0x5c3a1e, roughness: 0.7, metalness: 0.05 });
+const tableMesh = new THREE.Mesh(tableGeo, tableMat);
+tableMesh.position.y = TABLE_H;
+tableMesh.receiveShadow = true;
+tableMesh.castShadow = true;
+scene.add(tableMesh);
+
+// Table legs
+const legGeo = new THREE.CylinderGeometry(0.08, 0.08, TABLE_H, 8);
+const legMat = new THREE.MeshStandardMaterial({ color: 0x3d2610, roughness: 0.9 });
+[[-2,2],[2,2],[-2,-2],[2,-2]].forEach(([x,z]) => {
+  const leg = new THREE.Mesh(legGeo, legMat);
+  leg.position.set(x, TABLE_H/2, z);
+  leg.castShadow = true;
+  scene.add(leg);
+});
+
+// Table physics
+const tableBody = new CANNON.Body({ mass: 0, material: defaultMat });
+tableBody.addShape(new CANNON.Box(new CANNON.Vec3(2.5, 0.08, 2.5)));
+tableBody.position.set(0, TABLE_H, 0);
+world.addBody(tableBody);
+
+// Table surface line decoration
+const edgeGeo = new THREE.EdgesGeometry(tableGeo);
+const edgeMat = new THREE.LineBasicMaterial({ color: 0x8b5e30, transparent: true, opacity: 0.4 });
+const edges = new THREE.LineSegments(edgeGeo, edgeMat);
+edges.position.copy(tableMesh.position);
+scene.add(edges);
+
+// ─── JENGA BLOCKS ────────────────────────────────────────────────────────────
+const BW = 0.75; // block width (long axis)
+const BH = 0.25; // height
+const BD = 0.25; // depth (short)
+const GAP = 0.005;
+
+const COLORS = [0xe8c87a, 0xd4a855, 0xc49040, 0xdfc070, 0xeba840, 0xcc9030];
+
+const objects = []; // { mesh, body, row, col, active }
+
+function createBlock(x, y, z, rotY = 0) {
+  const mat = new THREE.MeshStandardMaterial({
+    color: COLORS[Math.floor(Math.random()*COLORS.length)],
+    roughness: 0.72, metalness: 0.04
+  });
+  const geo = new THREE.BoxGeometry(BW, BH, BD);
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+
+  // Edge lines on each block for wood look
+  const eg = new THREE.EdgesGeometry(geo);
+  const el = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: 0x7a4f10, transparent: true, opacity: 0.35 }));
+  mesh.add(el);
+
+  scene.add(mesh);
+
+  const body = new CANNON.Body({ mass: 0.4, material: defaultMat, linearDamping: 0.3, angularDamping: 0.6 });
+  body.addShape(new CANNON.Box(new CANNON.Vec3(BW/2, BH/2, BD/2)));
+  body.position.set(x, y, z);
+  body.quaternion.setFromEuler(0, rotY, 0);
+  body.allowSleep = true;
+  body.sleepSpeedLimit = 0.05;
+  body.sleepTimeLimit = 0.5;
+  world.addBody(body);
+
+  objects.push({ mesh, body, removed: false, highlighted: false, originalColor: mat.color.clone() });
+  return objects[objects.length - 1];
+}
+
+const NUM_ROWS = 18; // 18 levels
+function buildTower() {
+  const BASE_Y = TABLE_TOP + BH/2;
+  for (let row = 0; row < NUM_ROWS; row++) {
+    const y = BASE_Y + row * (BH + GAP);
+    const rotY = (row % 2 === 0) ? 0 : Math.PI/2;
+    for (let col = 0; col < 3; col++) {
+      const offset = (col - 1) * (BD + GAP);
+      if (row % 2 === 0) {
+        createBlock(offset, y, 0, 0);
+      } else {
+        createBlock(0, y, offset, 0);
+      }
+    }
+  }
+}
+buildTower();
+
+// ─── GAME STATE ──────────────────────────────────────────────────────────────
+let gamePhase = 'PULL'; // PULL | PLACE | WAIT
+let currentPlayer = 1;
+let totalPlayers = 2;
+let pulledBlock = null;
+let moveCount = 0;
+let gameOver = false;
+let stabilityFrames = 0;
+
+// UI refs
+const valNiveau = document.getElementById('val-niveau');
+const valBlocs = document.getElementById('val-blocs');
+const valJoueur = document.getElementById('val-joueur');
+const turnBanner = document.getElementById('turn-banner');
+const statusMsg = document.getElementById('status-msg');
+const gameoverScreen = document.getElementById('gameover-screen');
+const gameoverWinner = document.getElementById('gameover-winner');
+
+function showStatus(msg, dur = 2500) {
+  statusMsg.textContent = msg;
+  statusMsg.style.opacity = '1';
+  clearTimeout(showStatus._t);
+  showStatus._t = setTimeout(() => { statusMsg.style.opacity = '0'; }, dur);
+}
+
+function updateUI() {
+  valNiveau.textContent = Math.ceil((objects.filter(o=>!o.removed).length) / 3) || '—';
+  valBlocs.textContent = moveCount;
+  valJoueur.textContent = currentPlayer;
+  if (gamePhase === 'PULL') {
+    turnBanner.textContent = `JOUEUR ${currentPlayer} — TIREZ UN BLOC`;
+  } else if (gamePhase === 'PLACE') {
+    turnBanner.textContent = `JOUEUR ${currentPlayer} — POSEZ EN HAUT`;
+  }
+}
+
+// ─── RAYCASTING & INTERACTION ────────────────────────────────────────────────
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+let hoveredObj = null;
+
+function getBlockMeshes() {
+  return objects.filter(o => !o.removed).map(o => o.mesh);
+}
+
+function onMouseMove(e) {
+  if (gameOver) return;
+  mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+  if (gamePhase === 'PULL' && !pulledBlock) {
+    raycaster.setFromCamera(mouse, camera);
+    const hits = raycaster.intersectObjects(getBlockMeshes());
+
+    if (hoveredObj) {
+      if (!hoveredObj.removed) {
+        hoveredObj.mesh.material.emissive.setHex(0x000000);
+        hoveredObj.mesh.material.emissiveIntensity = 0;
+      }
+      hoveredObj = null;
+    }
+
+    if (hits.length > 0) {
+      const obj = objects.find(o => o.mesh === hits[0].object);
+      if (obj && !obj.removed && canPull(obj)) {
+        hoveredObj = obj;
+        obj.mesh.material.emissive.setHex(0xffffff);
+        obj.mesh.material.emissiveIntensity = 0.18;
+        renderer.domElement.style.cursor = 'pointer';
+        return;
+      }
+    }
+    renderer.domElement.style.cursor = 'default';
+  }
+}
+
+// Check if a block can be pulled (not top 2 rows, not sole supporter)
+function getRowOf(obj) {
+  const y = obj.body.position.y;
+  return Math.round((y - TABLE_TOP - BH/2) / (BH + GAP));
+}
+
+function canPull(obj) {
+  if (obj.removed) return false;
+  const topRow = getTopRow();
+  const row = getRowOf(obj);
+  if (row >= topRow - 1) return false; // Top 2 rows locked
+  return true;
+}
+
+function getTopRow() {
+  let maxRow = 0;
+  objects.forEach(o => {
+    if (!o.removed) {
+      const r = getRowOf(o);
+      if (r > maxRow) maxRow = r;
+    }
+  });
+  return maxRow;
+}
+
+// Drag state
+let isDragging = false;
+let dragStartMouse = { x: 0, y: 0 };
+let dragObj = null;
+let dragAxis = null; // 'x' or 'z'
+let dragBodyInitPos = null;
+let dragMouseStart3D = null;
+
+function getPlacementPosition() {
+  const topRow = getTopRow();
+  const nextRow = topRow + 1;
+  const nextRotY = (nextRow % 2 === 0) ? 0 : Math.PI/2;
+  const y = TABLE_TOP + BH/2 + nextRow * (BH + GAP);
+
+  // Find open slot in next row
+  const occupied = objects.filter(o => !o.removed && getRowOf(o) === nextRow).map(o => {
+    const p = o.body.position;
+    return nextRow % 2 === 0 ? p.x : p.z;
+  });
+
+  for (let col = 0; col < 3; col++) {
+    const offset = (col - 1) * (BD + GAP);
+    if (!occupied.some(v => Math.abs(v - offset) < 0.1)) {
+      return { x: nextRow%2===0 ? offset : 0, y, z: nextRow%2===0 ? 0 : offset, rotY: nextRotY, valid: true };
+    }
+  }
+  return { valid: false };
+}
+
+function onClick(e) {
+  if (gameOver) return;
+  mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+  if (gamePhase === 'PULL') {
+    raycaster.setFromCamera(mouse, camera);
+    const hits = raycaster.intersectObjects(getBlockMeshes());
+    if (hits.length > 0) {
+      const obj = objects.find(o => o.mesh === hits[0].object);
+      if (obj && canPull(obj)) {
+        pullBlock(obj);
+      } else if (obj) {
+        showStatus('Ce bloc ne peut pas être retiré !');
+      }
+    }
+  } else if (gamePhase === 'PLACE') {
+    placeBlock();
+  }
+}
+
+function pullBlock(obj) {
+  pulledBlock = obj;
+  obj.removed = true;
+
+  // Animate removal — make body kinematic
+  obj.body.mass = 0;
+  obj.body.updateMassProperties();
+  obj.body.velocity.setZero();
+  obj.body.angularVelocity.setZero();
+  obj.body.type = CANNON.Body.KINEMATIC;
+
+  // Move it to a holding area (above the scene, slightly offset)
+  obj.body.position.set(3.5, TABLE_TOP + 8, 0);
+  obj.mesh.material.emissive.setHex(0xe8c87a);
+  obj.mesh.material.emissiveIntensity = 0.3;
+
+  gamePhase = 'PLACE';
+  moveCount++;
+  showStatus('Bloc retiré ! Maintenant, posez-le en haut.', 3000);
+  updateUI();
+}
+
+function placeBlock() {
+  if (!pulledBlock) return;
+  const pos = getPlacementPosition();
+  if (!pos.valid) {
+    showStatus('Plus de place disponible, la tour est complète !');
+    // End turn anyway
+    endTurn();
+    return;
+  }
+
+  pulledBlock.body.type = CANNON.Body.DYNAMIC;
+  pulledBlock.body.mass = 0.4;
+  pulledBlock.body.updateMassProperties();
+  pulledBlock.body.position.set(pos.x, pos.y + 2, pos.z);
+  pulledBlock.body.velocity.set(0, -2, 0);
+  pulledBlock.body.angularVelocity.setZero();
+  pulledBlock.body.quaternion.setFromEuler(0, pos.rotY, 0);
+  pulledBlock.removed = false;
+
+  pulledBlock.mesh.material.emissive.setHex(0x000000);
+  pulledBlock.mesh.material.emissiveIntensity = 0;
+
+  pulledBlock = null;
+  gamePhase = 'WAIT';
+  stabilityFrames = 0;
+  showStatus('Bloc posé ! En attente de stabilisation…', 2000);
+
+  // After a moment, move to next player
+  setTimeout(() => {
+    if (!gameOver) endTurn();
+  }, 2800);
+}
+
+function endTurn() {
+  currentPlayer = (currentPlayer % totalPlayers) + 1;
+  gamePhase = 'PULL';
+  pulledBlock = null;
+  updateUI();
+  showStatus(`Au tour du Joueur ${currentPlayer}`, 2000);
+}
+
+// ─── FALL DETECTION ──────────────────────────────────────────────────────────
+let fellFrames = 0;
+function checkFall() {
+  let anyFell = false;
+  objects.forEach(o => {
+    if (!o.removed && o.body.position.y < TABLE_H - 0.5) {
+      anyFell = true;
+    }
+  });
+  if (anyFell) {
+    fellFrames++;
+    if (fellFrames > 15 && !gameOver) triggerGameOver();
+  } else {
+    fellFrames = 0;
+  }
+}
+
+function triggerGameOver() {
+  gameOver = true;
+  gamePhase = 'OVER';
+  gameoverWinner.textContent = `JOUEUR ${currentPlayer === 1 ? totalPlayers : currentPlayer - 1} GAGNE !`;
+  gameoverScreen.classList.add('visible');
+  gameoverScreen.style.pointerEvents = 'all';
+}
+
+window.restartGame = function() {
+  location.reload();
+};
+
+// ─── EVENTS ──────────────────────────────────────────────────────────────────
+renderer.domElement.addEventListener('mousemove', onMouseMove);
+renderer.domElement.addEventListener('click', onClick);
+
+// Right-click cancel pull placement
+renderer.domElement.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  if (gamePhase === 'PLACE' && pulledBlock) {
+    showStatus('Pose annulée — le bloc est remplacé');
+    // put block back (simplified: just end turn and mark as gone)
+    pulledBlock.body.type = CANNON.Body.DYNAMIC;
+    pulledBlock.body.mass = 0.4;
+    pulledBlock.body.updateMassProperties();
+    pulledBlock.body.position.set(
+      (Math.random()-0.5)*6, TABLE_TOP + 12, (Math.random()-0.5)*6
+    );
+    pulledBlock.removed = false;
+    pulledBlock = null;
+    endTurn();
+  }
+});
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ─── CAMERA AUTO-FOLLOW TOWER ─────────────────────────────────────────────────
+let camTargetY = 3;
+
+// ─── ANIMATE ─────────────────────────────────────────────────────────────────
+const clock = new THREE.Clock();
+let lastPhysicsTime = 0;
+const PHYS_STEP = 1/120;
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = clock.getDelta();
+
+  // Physics substeps
+  const now = clock.elapsedTime;
+  let steps = 0;
+  while (lastPhysicsTime < now && steps < 5) {
+    world.step(PHYS_STEP);
+    lastPhysicsTime += PHYS_STEP;
+    steps++;
+  }
+
+  // Sync meshes
+  objects.forEach(o => {
+    o.mesh.position.copy(o.body.position);
+    o.mesh.quaternion.copy(o.body.quaternion);
+  });
+
+  // Auto-track camera to tower top
+  if (!gameOver) {
+    const topRow = getTopRow();
+    const topY = TABLE_TOP + topRow * (BH + GAP) + 1.5;
+    camTargetY += (topY - camTargetY) * 0.015;
+    controls.target.y += (camTargetY - controls.target.y) * 0.03;
+  }
+
+  checkFall();
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+updateUI();
+animate();
+
+showStatus('Joueur 1 — Cliquez sur un bloc pour commencer !', 4000);
+</script>
+</body>
+</html>
