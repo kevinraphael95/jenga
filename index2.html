@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>JENGA 3D</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { overflow:hidden; background:#0d0a06; font-family:'Georgia',serif; user-select:none; }
+canvas { display:block; }
+
+#ui { position:fixed; inset:0; pointer-events:none; }
+
+#header {
+  position:absolute; top:0; left:0; right:0;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:16px 28px;
+  background:linear-gradient(to bottom,rgba(0,0,0,0.8),transparent);
+}
+#logo { font-size:30px; letter-spacing:10px; color:#e8d08a; font-weight:normal; }
+#stats { display:flex; gap:28px; }
+.stat { text-align:center; }
+.stat-label { font-size:9px; letter-spacing:3px; color:#666; text-transform:uppercase; }
+.stat-val { font-size:24px; color:#e8d08a; line-height:1.1; }
+
+#banner {
+  position:absolute; top:76px; left:50%; transform:translateX(-50%);
+  padding:7px 24px;
+  border:1px solid rgba(232,208,138,0.35); background:rgba(0,0,0,0.65);
+  font-size:12px; letter-spacing:4px; color:#e8d08a; white-space:nowrap;
+}
+
+#msg {
+  position:absolute; bottom:60px; left:50%; transform:translateX(-50%);
+  padding:9px 22px;
+  background:rgba(0,0,0,0.75); border:1px solid rgba(232,208,138,0.2);
+  font-size:12px; letter-spacing:2px; color:#e8d08a; white-space:nowrap;
+  transition:opacity 0.4s; pointer-events:none;
+}
+
+#help {
+  position:absolute; bottom:0; left:0; right:0;
+  display:flex; gap:28px; justify-content:center;
+  padding:14px 0 18px;
+  background:linear-gradient(to top,rgba(0,0,0,0.8),transparent);
+  font-size:11px; color:#555; letter-spacing:1px;
+}
+.hk { color:#888; }
+.hk b { color:#aaa; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); padding:1px 6px; border-radius:2px; font-weight:normal; }
+
+#gameover {
+  position:absolute; inset:0;
+  background:rgba(0,0,0,0.9);
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px;
+  pointer-events:none; opacity:0; transition:opacity 1s;
+}
+#gameover.show { opacity:1; pointer-events:all; }
+#go-title { font-size:56px; letter-spacing:10px; color:#e8d08a; }
+#go-sub { font-size:14px; letter-spacing:4px; color:#777; }
+#go-btn {
+  margin-top:16px; padding:12px 44px;
+  border:1px solid rgba(232,208,138,0.5); background:transparent;
+  color:#e8d08a; font:14px/1 'Georgia',serif; letter-spacing:4px; cursor:pointer;
+}
+#go-btn:hover { background:rgba(232,208,138,0.1); }
+
+/* held block preview top-right */
+#held-preview {
+  position:absolute; top:76px; right:28px;
+  width:80px; height:60px;
+  border:1px solid rgba(232,208,138,0.2);
+  background:rgba(0,0,0,0.5);
+  display:none; align-items:center; justify-content:center;
+  font-size:10px; letter-spacing:2px; color:#666; text-align:center;
+}
+#held-preview.show { display:flex; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <div id="header">
+    <div id="logo">JENGA</div>
+    <div id="stats">
+      <div class="stat"><div class="stat-label">Rangées</div><div class="stat-val" id="v-rows">18</div></div>
+      <div class="stat"><div class="stat-label">Coups</div><div class="stat-val" id="v-moves">0</div></div>
+      <div class="stat"><div class="stat-label">Joueur</div><div class="stat-val" id="v-player">1</div></div>
+    </div>
+  </div>
+  <div id="banner">CHARGEMENT…</div>
+  <div id="msg" style="opacity:0">—</div>
+  <div id="held-preview">BLOC<br>EN MAIN</div>
+  <div id="help">
+    <span class="hk"><b>Clic</b> sélectionner</span>
+    <span class="hk"><b>Drag</b> glisser le bloc</span>
+    <span class="hk"><b>Clic</b> en phase POSE : poser</span>
+    <span class="hk"><b>Molette / Drag droit</b> caméra</span>
+  </div>
+  <div id="gameover">
+    <div id="go-title">TOMBÉE !</div>
+    <div id="go-sub" id="go-winner"></div>
+    <button id="go-btn" onclick="location.reload()">REJOUER</button>
+  </div>
+</div>
+
+<script type="importmap">
+{"imports":{
+  "three":"https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/",
+  "cannon-es":"https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ══════════════════════════════════════════════════════════
+// RENDERER
+// ══════════════════════════════════════════════════════════
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+document.body.appendChild(renderer.domElement);
+
+window.addEventListener('resize',()=>{
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+
+// ══════════════════════════════════════════════════════════
+// SCENE / CAMERA
+// ══════════════════════════════════════════════════════════
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x100c07);
+scene.fog = new THREE.FogExp2(0x100c07, 0.04);
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.01, 200);
+camera.position.set(0, 4, 14);
+
+const orb = new OrbitControls(camera, renderer.domElement);
+orb.target.set(0, 3, 0);
+orb.enableDamping = true;
+orb.dampingFactor = 0.07;
+orb.minDistance = 3;
+orb.maxDistance = 25;
+orb.maxPolarAngle = Math.PI * 0.48;
+orb.update();
+
+// ══════════════════════════════════════════════════════════
+// LIGHTS
+// ══════════════════════════════════════════════════════════
+scene.add(new THREE.AmbientLight(0xffe8c0, 0.4));
+
+const sun = new THREE.DirectionalLight(0xffd9a0, 2.2);
+sun.position.set(5, 16, 7);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.left = -8; sun.shadow.camera.right = 8;
+sun.shadow.camera.top = 16; sun.shadow.camera.bottom = -2;
+sun.shadow.camera.far = 40;
+sun.shadow.bias = -0.0005;
+scene.add(sun);
+
+const fill = new THREE.PointLight(0x3355aa,0.5,30);
+fill.position.set(-6,10,-4); scene.add(fill);
+
+// ══════════════════════════════════════════════════════════
+// PHYSICS
+// ══════════════════════════════════════════════════════════
+const world = new CANNON.World();
+world.gravity.set(0,-20,0);
+world.broadphase = new CANNON.SAPBroadphase(world);
+world.allowSleep = false; // keep all awake for stability checks
+
+const MAT = new CANNON.Material('wood');
+const CM = new CANNON.ContactMaterial(MAT,MAT,{ friction:0.6, restitution:0.02 });
+world.addContactMaterial(CM);
+
+// ══════════════════════════════════════════════════════════
+// ENVIRONMENT
+// ══════════════════════════════════════════════════════════
+// Floor
+const floorBody = new CANNON.Body({mass:0, material:MAT});
+floorBody.addShape(new CANNON.Plane());
+floorBody.quaternion.setFromEuler(-Math.PI/2,0,0);
+world.addBody(floorBody);
+
+const floorMesh = new THREE.Mesh(
+  new THREE.PlaneGeometry(60,60),
+  new THREE.MeshStandardMaterial({color:0x1a1208, roughness:1})
+);
+floorMesh.rotation.x = -Math.PI/2;
+floorMesh.receiveShadow = true;
+scene.add(floorMesh);
+
+// Table
+const TH = 1.0;       // table top height (physics surface)
+const TSURF = TH + 0.07; // visual top surface y
+
+const tablePhys = new CANNON.Body({mass:0, material:MAT});
+tablePhys.addShape(new CANNON.Box(new CANNON.Vec3(2.2,0.07,2.2)));
+tablePhys.position.set(0,TH,0);
+world.addBody(tablePhys);
+
+// Table visual — top + legs
+const tTopMesh = new THREE.Mesh(
+  new THREE.BoxGeometry(4.4,0.14,4.4),
+  new THREE.MeshStandardMaterial({color:0x4a2e12, roughness:0.75, metalness:0.02})
+);
+tTopMesh.position.y = TH;
+tTopMesh.receiveShadow = tTopMesh.castShadow = true;
+scene.add(tTopMesh);
+
+// Subtle wood grain lines on table
+for(let i=-1;i<=1;i+=0.4){
+  const lg = new THREE.Mesh(new THREE.BoxGeometry(4.4,0.001,0.01),
+    new THREE.MeshStandardMaterial({color:0x3a2008}));
+  lg.position.set(0,TH+0.071,i);
+  scene.add(lg);
+}
+
+const legM = new THREE.MeshStandardMaterial({color:0x3a2008,roughness:0.9});
+[[-1.8,1.8],[1.8,1.8],[-1.8,-1.8],[1.8,-1.8]].forEach(([x,z])=>{
+  const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.09,TH,8),legM);
+  leg.position.set(x,TH/2,z);
+  leg.castShadow = true;
+  scene.add(leg);
+});
+
+// ══════════════════════════════════════════════════════════
+// JENGA BLOCK DIMENSIONS  (real Jenga ratio: 7.5×2.5×1.5 cm)
+// scaled: long=1.5, short=0.5, height=0.3
+// ══════════════════════════════════════════════════════════
+const BL = 1.5;   // long axis
+const BS = 0.5;   // short axis (width of one block)
+const BH = 0.3;   // height
+const BGAP = 0.003; // tiny gap between blocks in same row
+
+// colors: warm wood tones
+const WCOLS = [0xd4943a,0xc8882e,0xdea040,0xcc9030,0xe0aa44,0xb87828];
+
+const blocks = []; // {mesh, body, row, col, removed}
+
+function makeBlock(x,y,z,rotY){
+  const col = WCOLS[Math.floor(Math.random()*WCOLS.length)];
+  const mat = new THREE.MeshStandardMaterial({color:col, roughness:0.78, metalness:0.03});
+  const geo = new THREE.BoxGeometry(BL,BH,BS);
+  const mesh = new THREE.Mesh(geo,mat);
+  mesh.castShadow = mesh.receiveShadow = true;
+
+  // subtle edge lines
+  const el = new THREE.LineSegments(
+    new THREE.EdgesGeometry(geo),
+    new THREE.LineBasicMaterial({color:0x6b3a08,transparent:true,opacity:0.4})
+  );
+  mesh.add(el);
+  scene.add(mesh);
+
+  const body = new CANNON.Body({
+    mass: 0.3,
+    material: MAT,
+    linearDamping: 0.6,
+    angularDamping: 0.8
+  });
+  body.addShape(new CANNON.Box(new CANNON.Vec3(BL/2,BH/2,BS/2)));
+  body.position.set(x,y,z);
+  body.quaternion.setFromEuler(0,rotY,0);
+  // START FROZEN so tower is stable immediately
+  body.type = CANNON.Body.STATIC;
+  world.addBody(body);
+
+  const obj = {mesh,body,removed:false};
+  blocks.push(obj);
+  return obj;
+}
+
+// ══════════════════════════════════════════════════════════
+// BUILD TOWER — proper Jenga layout
+// Row even (0,2,4…): 3 blocks along X axis, spaced along Z
+// Row odd  (1,3,5…): 3 blocks along Z axis (rotated 90°), spaced along X
+// ══════════════════════════════════════════════════════════
+const NROWS = 18;
+const STACK_BASE_Y = TSURF + BH/2; // bottom of first layer center
+
+function rowY(r){ return STACK_BASE_Y + r*(BH+0.001); }
+// spacing between block centers in a row: BS + tiny gap
+const SPACING = BS + BGAP;
+
+function buildTower(){
+  for(let r=0;r<NROWS;r++){
+    const y = rowY(r);
+    if(r%2===0){
+      // blocks along X, pointing in X direction, side by side along Z
+      for(let c=0;c<3;c++){
+        const z = (c-1)*SPACING;
+        makeBlock(0,y,z,0);
+      }
+    } else {
+      // blocks along Z (rotated 90°), side by side along X
+      for(let c=0;c<3;c++){
+        const x = (c-1)*SPACING;
+        makeBlock(x,y,0,Math.PI/2);
+      }
+    }
+  }
+}
+buildTower();
+
+// After a short moment, unfreeze blocks (let physics settle naturally)
+// But we actually want them fully stable — keep STATIC and only make dynamic when pulled
+// We'll make non-pulled blocks dynamic after 1s settle
+let unfrozen = false;
+setTimeout(()=>{
+  blocks.forEach(b=>{
+    if(!b.removed){
+      b.body.type = CANNON.Body.DYNAMIC;
+      b.body.wakeUp();
+    }
+  });
+  unfrozen = true;
+  setBanner('JOUEUR 1 — TIREZ UN BLOC');
+  showMsg('Cliquez sur un bloc pour le tirer !', 3500);
+  updateUI();
+}, 800);
+
+// ══════════════════════════════════════════════════════════
+// GAME STATE
+// ══════════════════════════════════════════════════════════
+let phase = 'LOADING'; // LOADING | PULL | DRAG | PLACE | WAIT | OVER
+let player = 1;
+const NPLAYERS = 2;
+let moves = 0;
+let heldBlock = null;   // the block currently held
+let gameOver = false;
+
+// ── UI helpers ──
+const banner   = document.getElementById('banner');
+const msgEl    = document.getElementById('msg');
+const vRows    = document.getElementById('v-rows');
+const vMoves   = document.getElementById('v-moves');
+const vPlayer  = document.getElementById('v-player');
+const goScreen = document.getElementById('gameover');
+const goWinner = document.getElementById('go-winner');
+const heldPrev = document.getElementById('held-preview');
+
+function setBanner(t){ banner.textContent = t; }
+let msgTimer;
+function showMsg(t,dur=2500){
+  msgEl.textContent=t; msgEl.style.opacity='1';
+  clearTimeout(msgTimer);
+  msgTimer = setTimeout(()=>msgEl.style.opacity='0',dur);
+}
+function updateUI(){
+  const alive = blocks.filter(b=>!b.removed).length;
+  vRows.textContent = Math.ceil(alive/3)||'—';
+  vMoves.textContent = moves;
+  vPlayer.textContent = player;
+}
+
+// ══════════════════════════════════════════════════════════
+// ROW UTILITIES
+// ══════════════════════════════════════════════════════════
+function getBlockRow(b){
+  return Math.round((b.body.position.y - STACK_BASE_Y) / (BH+0.001));
+}
+function getTopRow(){
+  let mx = 0;
+  blocks.forEach(b=>{ if(!b.removed){ const r=getBlockRow(b); if(r>mx)mx=r; }});
+  return mx;
+}
+function canPull(b){
+  if(b.removed) return false;
+  const r = getBlockRow(b);
+  const top = getTopRow();
+  if(r >= top-1) return false; // top 2 rows locked
+  return true;
+}
+
+// ══════════════════════════════════════════════════════════
+// DRAG SYSTEM — pull block along its own axis
+// ══════════════════════════════════════════════════════════
+const raycaster = new THREE.Raycaster();
+const mNDC = new THREE.Vector2();
+
+let hovered = null;
+let dragActive = false;
+let dragBlock = null;
+let dragPlane = new THREE.Plane();
+let dragOffset = new THREE.Vector3();
+let dragInitPos = new THREE.Vector3();
+let dragAxis = new THREE.Vector3(); // unit vector along which dragging is allowed
+let dragConstrainedPos = new THREE.Vector3();
+
+function ndcMouse(e){
+  mNDC.x = (e.clientX/innerWidth)*2-1;
+  mNDC.y = -(e.clientY/innerHeight)*2+1;
+}
+
+function getHoverable(){
+  return blocks.filter(b=>!b.removed&&canPull(b)).map(b=>b.mesh);
+}
+
+// World pos at drag plane intersection
+function dragPlaneHit(e){
+  ndcMouse(e);
+  raycaster.setFromCamera(mNDC,camera);
+  const pt = new THREE.Vector3();
+  raycaster.ray.intersectPlane(dragPlane,pt);
+  return pt;
+}
+
+renderer.domElement.addEventListener('mousemove', onMove);
+renderer.domElement.addEventListener('mousedown', onDown);
+renderer.domElement.addEventListener('mouseup',   onUp);
+renderer.domElement.addEventListener('contextmenu',e=>e.preventDefault());
+
+function onMove(e){
+  if(gameOver) return;
+
+  // ── DRAG ──
+  if(dragActive && dragBlock){
+    const hit = dragPlaneHit(e);
+    if(!hit) return;
+    // project onto drag axis
+    const raw = hit.clone().sub(dragOffset);
+    const proj = dragAxis.clone().multiplyScalar(dragAxis.dot(raw.clone().sub(dragInitPos)));
+    const newPos = dragInitPos.clone().add(proj);
+
+    // clamp: don't let the block go back into the tower center too much
+    // and don't go too far out
+    const dist = proj.length() * Math.sign(dragAxis.dot(raw.clone().sub(dragInitPos)));
+    const clamped = THREE.MathUtils.clamp(dist, -0.1, BL*1.4);
+    const finalPos = dragInitPos.clone().add(dragAxis.clone().multiplyScalar(clamped));
+
+    dragBlock.body.position.set(finalPos.x, dragBlock.body.position.y, finalPos.z);
+    dragBlock.body.velocity.setZero();
+    dragBlock.body.angularVelocity.setZero();
+
+    // highlight progress
+    const t = Math.min(clamped/BL,1);
+    dragBlock.mesh.material.emissiveIntensity = 0.05 + t*0.25;
+    return;
+  }
+
+  // ── HOVER ──
+  if(phase==='PULL'){
+    ndcMouse(e);
+    raycaster.setFromCamera(mNDC,camera);
+    const meshes = getHoverable();
+    const hits = raycaster.intersectObjects(meshes);
+
+    if(hovered){ hovered.mesh.material.emissive.setHex(0); hovered.mesh.material.emissiveIntensity=0; hovered=null; }
+    if(hits.length>0){
+      const obj = blocks.find(b=>b.mesh===hits[0].object);
+      if(obj){ hovered=obj; obj.mesh.material.emissive.setHex(0xffffff); obj.mesh.material.emissiveIntensity=0.15; renderer.domElement.style.cursor='grab'; return; }
+    }
+    renderer.domElement.style.cursor='default';
+  }
+}
+
+function onDown(e){
+  if(gameOver||!unfrozen) return;
+  if(e.button!==0) return;
+
+  // ── PHASE: PLACE — click places the held block on top ──
+  if(phase==='PLACE'){
+    doPlace();
+    return;
+  }
+
+  // ── PHASE: PULL — start drag ──
+  if(phase==='PULL'){
+    ndcMouse(e);
+    raycaster.setFromCamera(mNDC,camera);
+    const meshes = getHoverable();
+    const hits = raycaster.intersectObjects(meshes);
+    if(hits.length===0) return;
+
+    const obj = blocks.find(b=>b.mesh===hits[0].object);
+    if(!obj||!canPull(obj)) return;
+
+    // determine drag axis from block orientation
+    // even row blocks lie along X (rotY=0), odd along Z (rotY=π/2)
+    const row = getBlockRow(obj);
+    if(row%2===0){
+      // block along X → drag along X
+      dragAxis.set(1,0,0);
+    } else {
+      // block along Z → drag along Z
+      dragAxis.set(0,0,1);
+    }
+
+    // drag plane: horizontal plane at block height, facing camera
+    const blockWorldY = obj.body.position.y;
+    dragPlane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0,1,0), new THREE.Vector3(0,blockWorldY,0));
+
+    dragActive = true;
+    dragBlock = obj;
+    orb.enabled = false;
+    renderer.domElement.style.cursor='grabbing';
+
+    dragInitPos.set(obj.body.position.x, obj.body.position.y, obj.body.position.z);
+    const hit = dragPlaneHit(e);
+    dragOffset.copy(hit||dragInitPos);
+
+    // freeze this block kinematically during drag
+    obj.body.type = CANNON.Body.KINEMATIC;
+    obj.body.velocity.setZero();
+    obj.body.angularVelocity.setZero();
+  }
+}
+
+function onUp(e){
+  if(!dragActive||!dragBlock) return;
+  dragActive = false;
+  orb.enabled = true;
+  renderer.domElement.style.cursor='default';
+
+  // How far was it pulled?
+  const cur = dragBlock.body.position;
+  const dist = Math.sqrt(
+    Math.pow(cur.x-dragInitPos.x,2)+
+    Math.pow(cur.z-dragInitPos.z,2)
+  );
+
+  if(dist > BL*0.7){
+    // Successfully pulled out!
+    completePull(dragBlock);
+  } else {
+    // Not far enough — snap back
+    dragBlock.body.position.set(dragInitPos.x,dragInitPos.y,dragInitPos.z);
+    dragBlock.body.type = CANNON.Body.DYNAMIC;
+    dragBlock.body.velocity.setZero();
+    dragBlock.body.angularVelocity.setZero();
+    dragBlock.mesh.material.emissive.setHex(0);
+    dragBlock.mesh.material.emissiveIntensity=0;
+    showMsg('Pas assez loin — tirez davantage !');
+  }
+  dragBlock=null;
+}
+
+// ══════════════════════════════════════════════════════════
+// PULL / PLACE LOGIC
+// ══════════════════════════════════════════════════════════
+function completePull(obj){
+  heldBlock = obj;
+  obj.removed = true;
+  moves++;
+
+  // Park it floating to the side (kinematic, invisible from play area)
+  obj.body.type = CANNON.Body.KINEMATIC;
+  obj.body.velocity.setZero();
+  obj.body.angularVelocity.setZero();
+  // move to a parked "holding" position
+  obj.body.position.set(4, TSURF+2.5, 0);
+
+  obj.mesh.material.emissive.setHex(0xe8c87a);
+  obj.mesh.material.emissiveIntensity = 0.4;
+
+  phase = 'PLACE';
+  heldPrev.classList.add('show');
+  setBanner(`JOUEUR ${player} — CLIQUEZ POUR POSER EN HAUT`);
+  showMsg('Bloc retiré ! Cliquez n\'importe où pour le poser en haut.', 4000);
+  updateUI();
+}
+
+function doPlace(){
+  if(!heldBlock) return;
+
+  const top = getTopRow();
+  const newRow = top + 1;
+  const newRotY = (newRow%2===0) ? 0 : Math.PI/2;
+  const newY = rowY(newRow);
+
+  // Find free column slot in new row
+  const taken = blocks
+    .filter(b=>!b.removed && Math.abs(getBlockRow(b)-newRow)<0.5)
+    .map(b=> newRow%2===0 ? b.body.position.z : b.body.position.x );
+
+  let placed = false;
+  for(let c=0;c<3;c++){
+    const offset = (c-1)*SPACING;
+    if(!taken.some(v=>Math.abs(v-offset)<0.2)){
+      // place here
+      heldBlock.body.type = CANNON.Body.DYNAMIC;
+      heldBlock.body.mass = 0.3;
+      heldBlock.body.updateMassProperties();
+      heldBlock.body.linearDamping = 0.6;
+      heldBlock.body.angularDamping = 0.8;
+      const px = newRow%2===0 ? 0 : offset;
+      const pz = newRow%2===0 ? offset : 0;
+      heldBlock.body.position.set(px, newY+1.5, pz);
+      heldBlock.body.velocity.set(0,-3,0);
+      heldBlock.body.angularVelocity.setZero();
+      heldBlock.body.quaternion.setFromEuler(0,newRotY,0);
+      heldBlock.removed = false;
+      placed = true;
+      break;
+    }
+  }
+
+  if(!placed){
+    // Row already full (unlikely but safe): start a new row with a different col
+    heldBlock.body.type = CANNON.Body.DYNAMIC;
+    heldBlock.body.mass = 0.3;
+    heldBlock.body.updateMassProperties();
+    heldBlock.body.position.set(0, rowY(newRow+1)+1.5, 0);
+    heldBlock.body.velocity.set(0,-2,0);
+    heldBlock.body.quaternion.setFromEuler(0,newRotY,0);
+    heldBlock.removed = false;
+  }
+
+  heldBlock.mesh.material.emissive.setHex(0);
+  heldBlock.mesh.material.emissiveIntensity = 0;
+  heldBlock = null;
+  heldPrev.classList.remove('show');
+
+  phase = 'WAIT';
+  setBanner('STABILISATION…');
+  setTimeout(endTurn, 2200);
+}
+
+function endTurn(){
+  if(gameOver) return;
+  player = (player%NPLAYERS)+1;
+  phase = 'PULL';
+  setBanner(`JOUEUR ${player} — TIREZ UN BLOC`);
+  showMsg(`Tour du Joueur ${player}`, 2000);
+  updateUI();
+}
+
+// ══════════════════════════════════════════════════════════
+// FALL DETECTION
+// ══════════════════════════════════════════════════════════
+let fallCount=0;
+function checkFall(){
+  let fell=false;
+  blocks.forEach(b=>{
+    if(!b.removed && b.body.position.y < TH-0.3) fell=true;
+  });
+  if(fell){ fallCount++; if(fallCount>20&&!gameOver) doGameOver(); }
+  else fallCount=0;
+}
+function doGameOver(){
+  gameOver=true; phase='OVER';
+  const winner = player===1?NPLAYERS:player-1;
+  goWinner.textContent = `JOUEUR ${winner} GAGNE !`;
+  goScreen.classList.add('show');
+}
+
+// ══════════════════════════════════════════════════════════
+// CAMERA TRACK
+// ══════════════════════════════════════════════════════════
+let camTY=3;
+function trackCamera(){
+  const top = getTopRow();
+  const ideal = STACK_BASE_Y + top*(BH+0.001)*0.6 + 1;
+  camTY += (ideal-camTY)*0.02;
+  orb.target.y += (camTY-orb.target.y)*0.04;
+}
+
+// ══════════════════════════════════════════════════════════
+// ANIMATE
+// ══════════════════════════════════════════════════════════
+const clock = new THREE.Clock();
+let phAcc=0;
+const STEP=1/120;
+
+function loop(){
+  requestAnimationFrame(loop);
+  const dt = Math.min(clock.getDelta(),0.05);
+  phAcc+=dt;
+  while(phAcc>=STEP){ world.step(STEP); phAcc-=STEP; }
+
+  blocks.forEach(b=>{
+    b.mesh.position.copy(b.body.position);
+    b.mesh.quaternion.copy(b.body.quaternion);
+  });
+
+  if(unfrozen) checkFall();
+  trackCamera();
+  orb.update();
+  renderer.render(scene,camera);
+}
+loop();
+</script>
+</body>
+</html>
