@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>JENGA 3D</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { overflow:hidden; background:#0d0a06; font-family:'Georgia',serif; user-select:none; }
+canvas { display:block; }
+#ui { position:fixed; inset:0; pointer-events:none; }
+#header {
+  position:absolute; top:0; left:0; right:0;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:16px 28px;
+  background:linear-gradient(to bottom,rgba(0,0,0,0.8),transparent);
+}
+#logo { font-size:28px; letter-spacing:10px; color:#e8d08a; font-weight:normal; }
+#stats { display:flex; gap:24px; }
+.stat { text-align:center; }
+.stat-label { font-size:9px; letter-spacing:3px; color:#666; text-transform:uppercase; display:block; }
+.stat-val { font-size:22px; color:#e8d08a; }
+#banner {
+  position:absolute; top:74px; left:50%; transform:translateX(-50%);
+  padding:7px 22px; border:1px solid rgba(232,208,138,0.3);
+  background:rgba(0,0,0,0.7); font-size:11px; letter-spacing:4px; color:#e8d08a; white-space:nowrap;
+}
+#msg {
+  position:absolute; bottom:56px; left:50%; transform:translateX(-50%);
+  padding:8px 20px; background:rgba(0,0,0,0.8); border:1px solid rgba(232,208,138,0.2);
+  font-size:11px; letter-spacing:2px; color:#e8d08a; white-space:nowrap;
+  transition:opacity 0.4s; pointer-events:none;
+}
+#help {
+  position:absolute; bottom:0; left:0; right:0;
+  display:flex; gap:24px; justify-content:center; padding:12px 0 16px;
+  background:linear-gradient(to top,rgba(0,0,0,0.8),transparent);
+  font-size:10px; color:#555; letter-spacing:1px;
+}
+#help b { color:#999; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); padding:1px 5px; border-radius:2px; font-weight:normal; }
+#gameover {
+  position:absolute; inset:0; background:rgba(0,0,0,0.92);
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px;
+  pointer-events:none; opacity:0; transition:opacity 1s;
+}
+#gameover.show { opacity:1; pointer-events:all; }
+#go-title { font-size:52px; letter-spacing:10px; color:#e8d08a; }
+#go-sub { font-size:13px; letter-spacing:4px; color:#777; }
+#go-btn { margin-top:14px; padding:11px 40px; border:1px solid rgba(232,208,138,0.5); background:transparent; color:#e8d08a; font:13px 'Georgia',serif; letter-spacing:4px; cursor:pointer; }
+#go-btn:hover { background:rgba(232,208,138,0.1); }
+#held-info { position:absolute; top:74px; right:28px; padding:7px 16px; background:rgba(0,0,0,0.7); border:1px solid rgba(232,208,138,0.3); font-size:10px; letter-spacing:3px; color:#e8d08a; display:none; }
+#held-info.show { display:block; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <div id="header">
+    <div id="logo">JENGA</div>
+    <div id="stats">
+      <div class="stat"><span class="stat-label">Rangées</span><span class="stat-val" id="v-rows">18</span></div>
+      <div class="stat"><span class="stat-label">Coups</span><span class="stat-val" id="v-moves">0</span></div>
+      <div class="stat"><span class="stat-label">Joueur</span><span class="stat-val" id="v-player">1</span></div>
+    </div>
+  </div>
+  <div id="banner">CHARGEMENT…</div>
+  <div id="msg" style="opacity:0">—</div>
+  <div id="held-info">BLOC EN MAIN</div>
+  <div id="help">
+    <span><b>Survol</b> bloc disponible</span>
+    <span><b>Clic + Drag</b> tirer le bloc</span>
+    <span><b>Clic</b> (phase pose) placer en haut</span>
+    <span><b>Clic droit drag</b> tourner caméra</span>
+  </div>
+  <div id="gameover">
+    <div id="go-title">TOMBÉE !</div>
+    <div id="go-sub" id="go-winner"></div>
+    <button id="go-btn" onclick="location.reload()">REJOUER</button>
+  </div>
+</div>
+
+<script type="importmap">
+{"imports":{
+  "three":"https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/",
+  "cannon-es":"https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ── RENDERER ──────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+document.body.appendChild(renderer.domElement);
+window.addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+
+// ── SCENE ─────────────────────────────────────────────────
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x100c07);
+scene.fog = new THREE.Fog(0x100c07, 18, 35);
+
+// ── CAMERA ────────────────────────────────────────────────
+const camera = new THREE.PerspectiveCamera(45,innerWidth/innerHeight,0.01,100);
+camera.position.set(0, 5, 13);
+
+// OrbitControls on RIGHT MOUSE BUTTON only — left is reserved for drag
+const orb = new OrbitControls(camera, renderer.domElement);
+orb.target.set(0,3.5,0);
+orb.enableDamping = true;
+orb.dampingFactor = 0.08;
+orb.mouseButtons = { LEFT:null, MIDDLE:THREE.MOUSE.DOLLY, RIGHT:THREE.MOUSE.ROTATE };
+orb.touches = { ONE:null, TWO:THREE.TOUCH.DOLLY_ROTATE };
+orb.minDistance = 4; orb.maxDistance = 22;
+orb.maxPolarAngle = Math.PI*0.48;
+orb.update();
+
+// ── LIGHTS ────────────────────────────────────────────────
+scene.add(new THREE.AmbientLight(0xffe0b0, 0.5));
+const sun = new THREE.DirectionalLight(0xffd080,2.0);
+sun.position.set(6,18,8);
+sun.castShadow=true;
+sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.left=-7; sun.shadow.camera.right=7;
+sun.shadow.camera.top=18;  sun.shadow.camera.bottom=-2;
+sun.shadow.camera.far=40;  sun.shadow.bias=-0.0008;
+scene.add(sun);
+const fill = new THREE.PointLight(0x4060aa,0.5,25);
+fill.position.set(-5,8,-3); scene.add(fill);
+
+// ── PHYSICS ───────────────────────────────────────────────
+const world = new CANNON.World();
+world.gravity.set(0, -20, 0);
+world.broadphase = new CANNON.SAPBroadphase(world);
+world.allowSleep = false;
+
+const woodMat = new CANNON.Material('wood');
+world.addContactMaterial(new CANNON.ContactMaterial(woodMat, woodMat, {
+  friction: 0.65, restitution: 0.01
+}));
+
+// ── FLOOR ─────────────────────────────────────────────────
+const floorBody = new CANNON.Body({mass:0, material:woodMat});
+floorBody.addShape(new CANNON.Plane());
+floorBody.quaternion.setFromEuler(-Math.PI/2,0,0);
+world.addBody(floorBody);
+
+const floorMesh = new THREE.Mesh(
+  new THREE.PlaneGeometry(60,60),
+  new THREE.MeshStandardMaterial({color:0x1a1208,roughness:1})
+);
+floorMesh.rotation.x=-Math.PI/2; floorMesh.receiveShadow=true;
+scene.add(floorMesh);
+
+// ── TABLE ─────────────────────────────────────────────────
+// Table top surface at y = TABLE_Y
+const TABLE_Y = 1.08;   // physics surface (top face of table body)
+const TABLE_THICK = 0.12;
+const TABLE_BODY_Y = TABLE_Y - TABLE_THICK/2; // center of table body
+
+const tablePhys = new CANNON.Body({mass:0, material:woodMat});
+tablePhys.addShape(new CANNON.Box(new CANNON.Vec3(2.2, TABLE_THICK/2, 2.2)));
+tablePhys.position.set(0, TABLE_BODY_Y, 0);
+world.addBody(tablePhys);
+
+const tMesh = new THREE.Mesh(
+  new THREE.BoxGeometry(4.4, TABLE_THICK, 4.4),
+  new THREE.MeshStandardMaterial({color:0x4a2c10,roughness:0.78,metalness:0.02})
+);
+tMesh.position.y = TABLE_BODY_Y;
+tMesh.receiveShadow=tMesh.castShadow=true;
+scene.add(tMesh);
+
+// legs
+const legM = new THREE.MeshStandardMaterial({color:0x3a2008,roughness:0.9});
+[[-1.8,1.8],[1.8,1.8],[-1.8,-1.8],[1.8,-1.8]].forEach(([x,z])=>{
+  const m=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.09,TABLE_Y-TABLE_THICK,8),legM);
+  m.position.set(x,(TABLE_Y-TABLE_THICK)/2,z); m.castShadow=true; scene.add(m);
+});
+
+// ── JENGA DIMENSIONS ──────────────────────────────────────
+// Real Jenga: 75mm × 25mm × 15mm → ratio 5:1.67:1
+// We use: long=1.5, short=0.5, height=0.3  (ratio 5:1.67:1 ✓)
+const BL = 1.5;   // long side
+const BS = 0.5;   // short side
+const BH = 0.30;  // height
+
+// 3 blocks per row, snugly packed (no gap needed, slight tolerance)
+// center-to-center distance between blocks in a row = BS = 0.5
+// total row width = 3 * BS = 1.5  (same as BL ✓ square footprint)
+
+const WOOD_COLORS = [0xd4943a,0xc8862c,0xdaa040,0xca8e2a,0xe0aa44,0xb87828];
+
+const blocks = [];   // {mesh, body, row, col, removed, initX, initY, initZ, axisRow}
+
+// ── BUILD TOWER ───────────────────────────────────────────
+// Start blocks just above the table surface
+const BASE_Y = TABLE_Y + BH/2 + 0.001;
+
+// We place blocks as STATIC first, then switch to DYNAMIC after settle
+function addBlock(x, y, z, rotY){
+  const c = WOOD_COLORS[Math.floor(Math.random()*WOOD_COLORS.length)];
+  const mat = new THREE.MeshStandardMaterial({color:c, roughness:0.78, metalness:0.03});
+  const geo = new THREE.BoxGeometry(BL, BH, BS);
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.castShadow = mesh.receiveShadow = true;
+  mesh.add(new THREE.LineSegments(
+    new THREE.EdgesGeometry(geo),
+    new THREE.LineBasicMaterial({color:0x6b3800,transparent:true,opacity:0.35})
+  ));
+  scene.add(mesh);
+
+  // Physics body — start STATIC so tower doesn't fall
+  const body = new CANNON.Body({
+    mass: 1,
+    material: woodMat,
+    linearDamping: 0.99,
+    angularDamping: 0.99
+  });
+  body.addShape(new CANNON.Box(new CANNON.Vec3(BL/2, BH/2, BS/2)));
+  body.position.set(x, y, z);
+  body.quaternion.setFromEuler(0, rotY, 0);
+  body.type = CANNON.Body.STATIC;   // frozen initially
+  world.addBody(body);
+
+  const obj = {mesh, body, removed:false, initX:x, initY:y, initZ:z, rotY};
+  blocks.push(obj);
+  return obj;
+}
+
+const NROWS = 18;
+for(let r=0;r<NROWS;r++){
+  const y = BASE_Y + r * BH;
+  if(r%2===0){
+    // row along X: blocks aligned on X axis, separated along Z
+    // 3 blocks, centers at z = -BS, 0, +BS  →  contiguous
+    addBlock(0, y, -BS, 0);
+    addBlock(0, y,   0, 0);
+    addBlock(0, y,  +BS, 0);
+  } else {
+    // row along Z: blocks rotated 90°, separated along X
+    addBlock(-BS, y, 0, Math.PI/2);
+    addBlock(  0, y, 0, Math.PI/2);
+    addBlock(+BS, y, 0, Math.PI/2);
+  }
+}
+
+// After 600ms unfreeze — blocks are already in perfect position so they stay put
+let ready = false;
+setTimeout(()=>{
+  blocks.forEach(b=>{
+    b.body.type = CANNON.Body.DYNAMIC;
+    b.body.linearDamping  = 0.85;
+    b.body.angularDamping = 0.90;
+    b.body.velocity.setZero();
+    b.body.angularVelocity.setZero();
+  });
+  ready = true;
+  setPhase('PULL');
+  showMsg('Clic + glisser pour tirer un bloc !', 4000);
+}, 600);
+
+// ── GAME STATE ────────────────────────────────────────────
+let phase = 'LOADING';
+let player = 1;
+const NPLAYERS = 2;
+let moves = 0;
+let heldBlock = null;
+let gameOver = false;
+
+const bannerEl  = document.getElementById('banner');
+const msgEl     = document.getElementById('msg');
+const vRows     = document.getElementById('v-rows');
+const vMoves    = document.getElementById('v-moves');
+const vPlayer   = document.getElementById('v-player');
+const goScreen  = document.getElementById('gameover');
+const goWinner  = document.getElementById('go-winner');
+const heldInfo  = document.getElementById('held-info');
+
+let msgT;
+function showMsg(t,d=2500){ msgEl.textContent=t; msgEl.style.opacity='1'; clearTimeout(msgT); msgT=setTimeout(()=>msgEl.style.opacity='0',d); }
+function setPhase(p){
+  phase=p;
+  if(p==='PULL')   bannerEl.textContent=`JOUEUR ${player} — TIREZ UN BLOC`;
+  if(p==='PLACE')  bannerEl.textContent=`JOUEUR ${player} — CLIQUEZ POUR POSER`;
+  if(p==='WAIT')   bannerEl.textContent='STABILISATION…';
+  updateUI();
+}
+function updateUI(){
+  const alive=blocks.filter(b=>!b.removed).length;
+  vRows.textContent=Math.ceil(alive/3)||'—';
+  vMoves.textContent=moves;
+  vPlayer.textContent=player;
+}
+
+// ── ROW HELPERS ───────────────────────────────────────────
+function rowOf(b){
+  // row from initial Y position (body may have moved slightly)
+  return Math.round((b.initY - BASE_Y) / BH);
+}
+function topRow(){
+  let mx=0;
+  blocks.forEach(b=>{ if(!b.removed){ const r=rowOf(b); if(r>mx)mx=r; }});
+  return mx;
+}
+function canPull(b){
+  if(b.removed) return false;
+  return rowOf(b) < topRow()-1;   // can't touch top 2 rows
+}
+
+// ── DRAG SYSTEM ───────────────────────────────────────────
+const ray = new THREE.Raycaster();
+const mNDC = new THREE.Vector2();
+const hPlane = new THREE.Plane(new THREE.Vector3(0,1,0), 0);
+
+let hovered = null;
+let dragging = false;
+let dragObj  = null;
+let dragAxis = new THREE.Vector3();   // unit vector along block's long axis
+let dragStart= new THREE.Vector3();   // block center at drag start
+let dragHit  = new THREE.Vector3();   // mouse hit at drag start
+let dragCurrentOffset = 0;
+
+function setNDC(e){ mNDC.set((e.clientX/innerWidth)*2-1, -(e.clientY/innerHeight)*2+1); }
+function hitHPlane(worldY){
+  hPlane.constant = -worldY;
+  const p = new THREE.Vector3();
+  ray.ray.intersectPlane(hPlane, p);
+  return p;
+}
+
+renderer.domElement.addEventListener('mousemove', e=>{
+  if(gameOver||!ready) return;
+  setNDC(e);
+  ray.setFromCamera(mNDC, camera);
+
+  // ── dragging ──
+  if(dragging && dragObj){
+    const hit = hitHPlane(dragObj.body.position.y);
+    if(!hit) return;
+    // project mouse movement onto drag axis
+    const delta = hit.clone().sub(dragHit);
+    const proj = delta.dot(dragAxis);
+    // limit pull distance
+    const clamped = THREE.MathUtils.clamp(proj, -0.05, BL * 1.6);
+    const newPos = dragStart.clone().addScaledVector(dragAxis, clamped);
+    dragObj.body.position.set(newPos.x, dragObj.body.position.y, newPos.z);
+    dragObj.body.velocity.setZero();
+    dragObj.body.angularVelocity.setZero();
+    dragCurrentOffset = clamped;
+
+    const t = Math.min(clamped/BL, 1);
+    dragObj.mesh.material.emissiveIntensity = 0.06 + t*0.3;
+    return;
+  }
+
+  // ── hover ──
+  if(phase==='PULL'){
+    const meshes = blocks.filter(b=>!b.removed&&canPull(b)).map(b=>b.mesh);
+    const hits = ray.intersectObjects(meshes);
+    if(hovered){ hovered.mesh.material.emissive.setHex(0); hovered.mesh.material.emissiveIntensity=0; hovered=null; }
+    if(hits.length>0){
+      const obj=blocks.find(b=>b.mesh===hits[0].object);
+      if(obj&&canPull(obj)){
+        hovered=obj;
+        obj.mesh.material.emissive.setHex(0xffd060);
+        obj.mesh.material.emissiveIntensity=0.22;
+        renderer.domElement.style.cursor='grab';
+        return;
+      }
+    }
+    renderer.domElement.style.cursor='default';
+  }
+});
+
+renderer.domElement.addEventListener('mousedown', e=>{
+  if(gameOver||!ready||e.button!==0) return;
+
+  // Phase PLACE: click anywhere to place block on top
+  if(phase==='PLACE'){
+    doPlace();
+    return;
+  }
+
+  if(phase!=='PULL') return;
+
+  setNDC(e);
+  ray.setFromCamera(mNDC, camera);
+  const meshes = blocks.filter(b=>!b.removed&&canPull(b)).map(b=>b.mesh);
+  const hits = ray.intersectObjects(meshes);
+  if(hits.length===0) return;
+
+  const obj = blocks.find(b=>b.mesh===hits[0].object);
+  if(!obj||!canPull(obj)) return;
+
+  // Start drag
+  dragging = true;
+  dragObj  = obj;
+  orb.enabled = false;
+  renderer.domElement.style.cursor='grabbing';
+
+  // freeze this block kinematically
+  obj.body.type = CANNON.Body.KINEMATIC;
+  obj.body.velocity.setZero();
+  obj.body.angularVelocity.setZero();
+
+  dragStart.set(obj.body.position.x, obj.body.position.y, obj.body.position.z);
+  dragCurrentOffset = 0;
+
+  // drag axis = long axis of block in world space
+  const r = rowOf(obj);
+  // even rows: block lies along X (rotY=0) → long axis is X
+  // odd rows:  block lies along Z (rotY=π/2) → long axis is Z
+  dragAxis.set(r%2===0 ? 1 : 0,  0,  r%2===0 ? 0 : 1);
+
+  // get mouse hit on horizontal plane at block height
+  hPlane.constant = -obj.body.position.y;
+  const hp = hitHPlane(obj.body.position.y);
+  if(hp) dragHit.copy(hp);
+
+  if(hovered){ hovered.mesh.material.emissive.setHex(0); hovered=null; }
+  obj.mesh.material.emissive.setHex(0xffcc44);
+  obj.mesh.material.emissiveIntensity=0.1;
+});
+
+renderer.domElement.addEventListener('mouseup', e=>{
+  if(!dragging||e.button!==0) return;
+  dragging=false;
+  orb.enabled=true;
+  renderer.domElement.style.cursor='default';
+
+  if(!dragObj) return;
+
+  if(dragCurrentOffset > BL * 0.72){
+    // pulled far enough — complete extraction
+    completePull(dragObj);
+  } else {
+    // snap back to original position
+    dragObj.body.position.set(dragObj.initX, dragObj.initY, dragObj.initZ);
+    dragObj.body.velocity.setZero();
+    dragObj.body.angularVelocity.setZero();
+    dragObj.body.type = CANNON.Body.DYNAMIC;
+    dragObj.mesh.material.emissive.setHex(0);
+    dragObj.mesh.material.emissiveIntensity=0;
+    showMsg('Pas assez loin — continuez à tirer !');
+  }
+  dragObj=null;
+});
+
+// ── PULL / PLACE ──────────────────────────────────────────
+function completePull(obj){
+  obj.removed = true;
+  heldBlock   = obj;
+  moves++;
+
+  // park block in holding zone (invisible, kinematic)
+  obj.body.type = CANNON.Body.KINEMATIC;
+  obj.body.velocity.setZero();
+  obj.body.angularVelocity.setZero();
+  obj.body.position.set(5, TABLE_Y+3, 0);
+
+  obj.mesh.material.emissive.setHex(0xe8c060);
+  obj.mesh.material.emissiveIntensity=0.5;
+
+  heldInfo.classList.add('show');
+  setPhase('PLACE');
+  showMsg('Bloc retiré ! Cliquez pour le poser en haut.', 4000);
+}
+
+function doPlace(){
+  if(!heldBlock) return;
+
+  const top   = topRow();
+  const newRow= top + 1;
+  const newY  = BASE_Y + newRow * BH;
+  // orientation alternates
+  const newRotY = (newRow%2===0) ? 0 : Math.PI/2;
+
+  // find free slot in newRow
+  // even newRow: blocks spaced in Z (-BS, 0, +BS)
+  // odd  newRow: blocks spaced in X (-BS, 0, +BS)
+  const occupiedBlocks = blocks.filter(b=>!b.removed && rowOf(b)===newRow);
+  const takenSlots = new Set(occupiedBlocks.map(b=>{
+    const pos = newRow%2===0 ? b.initZ : b.initX;
+    return Math.round(pos/BS);  // -1, 0, or 1
+  }));
+
+  let placed=false;
+  for(const slot of [-1,0,1]){
+    if(!takenSlots.has(slot)){
+      const ox = newRow%2===0 ? 0 : slot*BS;
+      const oz = newRow%2===0 ? slot*BS : 0;
+
+      heldBlock.initX = ox;
+      heldBlock.initY = newY;
+      heldBlock.initZ = oz;
+      heldBlock.rotY  = newRotY;
+
+      heldBlock.body.type = CANNON.Body.DYNAMIC;
+      heldBlock.body.mass = 1;
+      heldBlock.body.updateMassProperties();
+      heldBlock.body.linearDamping  = 0.85;
+      heldBlock.body.angularDamping = 0.90;
+      heldBlock.body.position.set(ox, newY+1.8, oz);
+      heldBlock.body.velocity.set(0,-4,0);
+      heldBlock.body.angularVelocity.setZero();
+      heldBlock.body.quaternion.setFromEuler(0, newRotY, 0);
+      heldBlock.removed = false;
+
+      placed=true;
+      break;
+    }
+  }
+
+  if(!placed){
+    // All 3 slots taken in newRow somehow — start newRow+1
+    const r2=newRow+1;
+    const y2=BASE_Y+r2*BH;
+    heldBlock.initX=0; heldBlock.initY=y2; heldBlock.initZ=0;
+    heldBlock.rotY=(r2%2===0)?0:Math.PI/2;
+    heldBlock.body.type=CANNON.Body.DYNAMIC;
+    heldBlock.body.mass=1;
+    heldBlock.body.updateMassProperties();
+    heldBlock.body.position.set(0,y2+1.5,0);
+    heldBlock.body.velocity.set(0,-3,0);
+    heldBlock.body.angularVelocity.setZero();
+    heldBlock.body.quaternion.setFromEuler(0,heldBlock.rotY,0);
+    heldBlock.removed=false;
+  }
+
+  heldBlock.mesh.material.emissive.setHex(0);
+  heldBlock.mesh.material.emissiveIntensity=0;
+  heldBlock=null;
+  heldInfo.classList.remove('show');
+
+  setPhase('WAIT');
+  setTimeout(endTurn, 2000);
+}
+
+function endTurn(){
+  if(gameOver) return;
+  player=(player%NPLAYERS)+1;
+  setPhase('PULL');
+  showMsg(`Tour du Joueur ${player}`,2000);
+}
+
+// ── FALL DETECTION ────────────────────────────────────────
+let fallFrames=0;
+function checkFall(){
+  const fell=blocks.some(b=>!b.removed && b.body.position.y < TABLE_Y-0.4);
+  if(fell){ fallFrames++; if(fallFrames>25&&!gameOver) doGameOver(); }
+  else fallFrames=0;
+}
+function doGameOver(){
+  gameOver=true; phase='OVER';
+  const w=player===1?NPLAYERS:player-1;
+  goWinner.textContent=`JOUEUR ${w} GAGNE !`;
+  goScreen.classList.add('show');
+}
+
+// ── CAMERA TRACK ──────────────────────────────────────────
+let camTY=3.5;
+function trackCam(){
+  const top=topRow();
+  const ideal=BASE_Y+top*BH*0.55+1.5;
+  camTY+=(ideal-camTY)*0.015;
+  orb.target.y+=(camTY-orb.target.y)*0.04;
+}
+
+// ── LOOP ──────────────────────────────────────────────────
+const clock=new THREE.Clock();
+let acc=0;
+const STEP=1/120;
+
+function loop(){
+  requestAnimationFrame(loop);
+  const dt=Math.min(clock.getDelta(),0.04);
+  acc+=dt;
+  while(acc>=STEP){ world.step(STEP); acc-=STEP; }
+
+  blocks.forEach(b=>{
+    b.mesh.position.copy(b.body.position);
+    b.mesh.quaternion.copy(b.body.quaternion);
+  });
+
+  if(ready) checkFall();
+  trackCam();
+  orb.update();
+  renderer.render(scene,camera);
+}
+loop();
+</script>
+</body>
+</html>
