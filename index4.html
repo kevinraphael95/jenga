@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>JENGA 3D</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{overflow:hidden;background:#0d0a06;font-family:'Georgia',serif;user-select:none;}
+canvas{display:block;}
+#ui{position:fixed;inset:0;pointer-events:none;}
+#header{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;justify-content:space-between;padding:16px 28px;background:linear-gradient(to bottom,rgba(0,0,0,0.85),transparent);}
+#logo{font-size:28px;letter-spacing:10px;color:#e8d08a;font-weight:normal;}
+#stats{display:flex;gap:24px;}
+.stat{text-align:center;}
+.stat-label{font-size:9px;letter-spacing:3px;color:#666;text-transform:uppercase;display:block;}
+.stat-val{font-size:22px;color:#e8d08a;}
+#banner{position:absolute;top:74px;left:50%;transform:translateX(-50%);padding:7px 22px;border:1px solid rgba(232,208,138,0.3);background:rgba(0,0,0,0.75);font-size:11px;letter-spacing:4px;color:#e8d08a;white-space:nowrap;}
+#msg{position:absolute;bottom:56px;left:50%;transform:translateX(-50%);padding:8px 20px;background:rgba(0,0,0,0.8);border:1px solid rgba(232,208,138,0.2);font-size:11px;letter-spacing:2px;color:#e8d08a;white-space:nowrap;transition:opacity 0.4s;pointer-events:none;}
+#help{position:absolute;bottom:0;left:0;right:0;display:flex;gap:24px;justify-content:center;padding:12px 0 16px;background:linear-gradient(to top,rgba(0,0,0,0.8),transparent);font-size:10px;color:#555;letter-spacing:1px;}
+#help b{color:#999;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);padding:1px 5px;border-radius:2px;font-weight:normal;}
+#gameover{position:absolute;inset:0;background:rgba(0,0,0,0.93);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;pointer-events:none;opacity:0;transition:opacity 1s;}
+#gameover.show{opacity:1;pointer-events:all;}
+#go-title{font-size:52px;letter-spacing:10px;color:#e8d08a;}
+#go-sub{font-size:13px;letter-spacing:4px;color:#888;}
+#go-btn{margin-top:14px;padding:11px 40px;border:1px solid rgba(232,208,138,0.5);background:transparent;color:#e8d08a;font:13px 'Georgia',serif;letter-spacing:4px;cursor:pointer;}
+#go-btn:hover{background:rgba(232,208,138,0.1);}
+#held-badge{position:absolute;top:110px;left:50%;transform:translateX(-50%);padding:6px 18px;background:rgba(0,0,0,0.75);border:1px solid rgba(232,208,138,0.4);font-size:10px;letter-spacing:3px;color:#e8d08a;display:none;}
+#held-badge.show{display:block;}
+</style>
+</head>
+<body>
+<div id="ui">
+  <div id="header">
+    <div id="logo">JENGA</div>
+    <div id="stats">
+      <div class="stat"><span class="stat-label">Rangées</span><span class="stat-val" id="v-rows">18</span></div>
+      <div class="stat"><span class="stat-label">Coups</span><span class="stat-val" id="v-moves">0</span></div>
+      <div class="stat"><span class="stat-label">Joueur</span><span class="stat-val" id="v-player">1</span></div>
+    </div>
+  </div>
+  <div id="banner">PRÊT</div>
+  <div id="msg" style="opacity:0">—</div>
+  <div id="held-badge">BLOC EN MAIN — CLIC POUR POSER</div>
+  <div id="help">
+    <span><b>Survol</b> sélectionner</span>
+    <span><b>Clic + Drag</b> tirer le bloc</span>
+    <span><b>Clic droit drag</b> tourner caméra</span>
+    <span><b>Molette</b> zoom</span>
+  </div>
+  <div id="gameover">
+    <div id="go-title">TOMBÉE !</div>
+    <div id="go-sub" id="go-msg"></div>
+    <button id="go-btn" onclick="location.reload()">REJOUER</button>
+  </div>
+</div>
+<script type="importmap">
+{"imports":{
+  "three":"https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ─── RENDERER ────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.1;
+document.body.appendChild(renderer.domElement);
+window.addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+
+// ─── SCENE ───────────────────────────────────────────────
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x100c07);
+scene.fog=new THREE.Fog(0x100c07,20,38);
+
+// ─── CAMERA ──────────────────────────────────────────────
+const camera=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,0.01,100);
+camera.position.set(0,6,14);
+
+const orb=new OrbitControls(camera,renderer.domElement);
+orb.target.set(0,4,0);
+orb.enableDamping=true; orb.dampingFactor=0.08;
+orb.mouseButtons={LEFT:null,MIDDLE:THREE.MOUSE.DOLLY,RIGHT:THREE.MOUSE.ROTATE};
+orb.touches={ONE:null,TWO:THREE.TOUCH.DOLLY_ROTATE};
+orb.minDistance=4; orb.maxDistance=24;
+orb.maxPolarAngle=Math.PI*0.47;
+orb.update();
+
+// ─── LIGHTS ──────────────────────────────────────────────
+scene.add(new THREE.AmbientLight(0xffe0b0,0.55));
+const sun=new THREE.DirectionalLight(0xffd080,2.2);
+sun.position.set(6,18,8); sun.castShadow=true;
+sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.left=-8; sun.shadow.camera.right=8;
+sun.shadow.camera.top=22; sun.shadow.camera.bottom=-2;
+sun.shadow.camera.far=42; sun.shadow.bias=-0.0005;
+scene.add(sun);
+const fill=new THREE.PointLight(0x4060aa,0.6,28);
+fill.position.set(-5,10,-3); scene.add(fill);
+
+// ─── FLOOR ───────────────────────────────────────────────
+const floor=new THREE.Mesh(
+  new THREE.PlaneGeometry(60,60),
+  new THREE.MeshStandardMaterial({color:0x1a1208,roughness:1})
+);
+floor.rotation.x=-Math.PI/2; floor.receiveShadow=true; scene.add(floor);
+
+// ─── TABLE ───────────────────────────────────────────────
+const TABLE_Y=1.0, TABLE_T=0.18;
+const tbl=new THREE.Mesh(
+  new THREE.BoxGeometry(5,TABLE_T,5),
+  new THREE.MeshStandardMaterial({color:0x4a2c10,roughness:0.78,metalness:0.02})
+);
+tbl.position.y=TABLE_Y-TABLE_T/2;
+tbl.receiveShadow=tbl.castShadow=true; scene.add(tbl);
+const legM=new THREE.MeshStandardMaterial({color:0x3a2008,roughness:0.9});
+[[-2,2],[2,2],[-2,-2],[2,-2]].forEach(([x,z])=>{
+  const l=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.09,(TABLE_Y-TABLE_T),8),legM);
+  l.position.set(x,(TABLE_Y-TABLE_T)/2,z); l.castShadow=true; scene.add(l);
+});
+
+// ─── JENGA CONSTANTS ─────────────────────────────────────
+// BL=long side, BS=short side, BH=height
+const BL=1.5, BS=0.5, BH=0.30;
+const BASE_Y=TABLE_Y+BH/2; // center y of row 0
+
+// ─── BLOCK STRUCTURE ─────────────────────────────────────
+// Each block: { mesh, row, slot(-1/0/1), isEven, alive, falling, vy, angV }
+// "alive" = still part of the tower (not pulled out, not falling off table)
+// "falling" = physics sim active (block was pushed off or tower collapsed)
+
+const WOOD_COLS=[0xd4943a,0xc8862c,0xdaa040,0xca8e2a,0xe0aa44,0xb87828];
+let blocks=[];
+let fallingMeshes=[]; // {mesh, vy, angV, ax, az} simple gravity sim
+
+function blockPos(row,slot){
+  const isEven=(row%2===0);
+  return {
+    x: isEven ? 0 : slot*BS,
+    y: BASE_Y + row*BH,
+    z: isEven ? slot*BS : 0,
+    isEven
+  };
+}
+
+function makeMesh(isEven){
+  const gW=isEven?BL:BS, gD=isEven?BS:BL;
+  const geo=new THREE.BoxGeometry(gW,BH,gD);
+  const mat=new THREE.MeshStandardMaterial({
+    color:WOOD_COLS[Math.floor(Math.random()*WOOD_COLS.length)],
+    roughness:0.78,metalness:0.03
+  });
+  const mesh=new THREE.Mesh(geo,mat);
+  mesh.castShadow=mesh.receiveShadow=true;
+  mesh.add(new THREE.LineSegments(
+    new THREE.EdgesGeometry(geo),
+    new THREE.LineBasicMaterial({color:0x5a2e00,transparent:true,opacity:0.28})
+  ));
+  return mesh;
+}
+
+const NROWS=18;
+for(let r=0;r<NROWS;r++){
+  for(const s of [-1,0,1]){
+    const {x,y,z,isEven}=blockPos(r,s);
+    const mesh=makeMesh(isEven);
+    mesh.position.set(x,y,z);
+    scene.add(mesh);
+    blocks.push({mesh,row:r,slot:s,isEven,alive:true,pulled:false});
+  }
+}
+
+// ─── GAME STATE ───────────────────────────────────────────
+let phase='PULL', player=1, moves=0, heldBlock=null, gameOver=false;
+
+const bannerEl=document.getElementById('banner');
+const msgEl=document.getElementById('msg');
+const vRows=document.getElementById('v-rows');
+const vMoves=document.getElementById('v-moves');
+const vPlayer=document.getElementById('v-player');
+const goScreen=document.getElementById('gameover');
+const goMsg=document.getElementById('go-msg');
+const heldBadge=document.getElementById('held-badge');
+
+let msgTimer;
+function showMsg(t,d=2800){
+  msgEl.textContent=t; msgEl.style.opacity='1';
+  clearTimeout(msgTimer);
+  msgTimer=setTimeout(()=>msgEl.style.opacity='0',d);
+}
+function setPhase(p){
+  phase=p;
+  if(p==='PULL')  bannerEl.textContent=`JOUEUR ${player} — TIREZ UN BLOC`;
+  if(p==='PLACE') bannerEl.textContent=`JOUEUR ${player} — CLIQUEZ POUR POSER`;
+  if(p==='WAIT')  bannerEl.textContent='STABILISATION…';
+  vRows.textContent=topRow()+1;
+  vMoves.textContent=moves;
+  vPlayer.textContent=player;
+}
+
+// ─── HELPERS ─────────────────────────────────────────────
+function topRow(){
+  let mx=0;
+  blocks.forEach(b=>{ if(b.alive&&b.row>mx) mx=b.row; });
+  return mx;
+}
+function liveInRow(r){ return blocks.filter(b=>b.alive&&b.row===r); }
+
+// A block can be pulled if:
+// - it's alive
+// - not in the top 2 rows
+// - removing it won't leave its row completely empty (Jenga rule)
+function canPull(b){
+  if(!b.alive) return false;
+  const top=topRow();
+  if(b.row>=top-1) return false;
+  // If it's the only block left in its row, can't pull
+  if(liveInRow(b.row).length<=1) return false;
+  return true;
+}
+
+// ─── DRAG SYSTEM ─────────────────────────────────────────
+const ray=new THREE.Raycaster();
+const mNDC=new THREE.Vector2();
+
+// Drag plane at block's Y
+const dragPlane=new THREE.Plane();
+let hovered=null;
+let dragging=false, dragBlock=null;
+let dragAxis=new THREE.Vector3(); // +X or +Z
+let dragSign=1;                   // +1 or -1 (which end to pull from)
+let dragStartPos=new THREE.Vector3();  // block center at drag start
+let dragHitPos=new THREE.Vector3();    // mouse 3D pos at drag start
+let dragProgress=0;                    // how far pulled (0..BL)
+
+function ndc(e){ mNDC.set((e.clientX/innerWidth)*2-1,-(e.clientY/innerHeight)*2+1); }
+
+function rayPlaneHit(plane){
+  const pt=new THREE.Vector3();
+  const ok=ray.ray.intersectPlane(plane,pt);
+  return ok?pt:null;
+}
+
+renderer.domElement.addEventListener('mousemove',e=>{
+  if(gameOver) return;
+  ndc(e); ray.setFromCamera(mNDC,camera);
+
+  // ── active drag ──
+  if(dragging&&dragBlock){
+    const hit=rayPlaneHit(dragPlane);
+    if(!hit) return;
+
+    // How much has mouse moved along drag axis vs start?
+    const moved=hit.clone().sub(dragHitPos).dot(dragAxis)*dragSign;
+    // clamp: can't push block back past start, can pull up to BL*1.1
+    dragProgress=THREE.MathUtils.clamp(moved, 0, BL*1.1);
+
+    // Move block mesh directly
+    const newPos=dragStartPos.clone().addScaledVector(dragAxis, dragProgress*dragSign);
+    dragBlock.mesh.position.x=newPos.x;
+    dragBlock.mesh.position.z=newPos.z;
+
+    // Color feedback
+    const t=Math.min(dragProgress/BL,1);
+    dragBlock.mesh.material.emissive.setHex(0xff8800);
+    dragBlock.mesh.material.emissiveIntensity=0.1+t*0.4;
+    return;
+  }
+
+  // ── hover highlight ──
+  if(phase!=='PULL'){ renderer.domElement.style.cursor='default'; return; }
+  const pullable=blocks.filter(b=>canPull(b)).map(b=>b.mesh);
+  const hits=ray.intersectObjects(pullable,false);
+
+  if(hovered){
+    hovered.mesh.material.emissive.setHex(0);
+    hovered.mesh.material.emissiveIntensity=0;
+    hovered=null;
+  }
+  if(hits.length){
+    const found=blocks.find(b=>b.mesh===hits[0].object);
+    if(found&&canPull(found)){
+      hovered=found;
+      found.mesh.material.emissive.setHex(0xffd060);
+      found.mesh.material.emissiveIntensity=0.25;
+      renderer.domElement.style.cursor='grab';
+      return;
+    }
+  }
+  renderer.domElement.style.cursor='default';
+});
+
+renderer.domElement.addEventListener('mousedown',e=>{
+  if(gameOver||e.button!==0) return;
+
+  // Phase PLACE: click = place held block on top
+  if(phase==='PLACE'){ doPlace(); return; }
+  if(phase!=='PULL') return;
+
+  ndc(e); ray.setFromCamera(mNDC,camera);
+  const pullable=blocks.filter(b=>canPull(b)).map(b=>b.mesh);
+  const hits=ray.intersectObjects(pullable,false);
+  if(!hits.length) return;
+
+  const found=blocks.find(b=>b.mesh===hits[0].object);
+  if(!found||!canPull(found)) return;
+
+  // Start drag
+  dragging=true;
+  dragBlock=found;
+  orb.enabled=false;
+  renderer.domElement.style.cursor='grabbing';
+  dragProgress=0;
+
+  // Store start position
+  dragStartPos.copy(found.mesh.position);
+
+  // Drag axis: even row → long axis is X; odd row → long axis is Z
+  dragAxis.set(found.isEven?1:0, 0, found.isEven?0:1);
+
+  // Drag plane: horizontal at block's Y
+  dragPlane.normal.set(0,1,0);
+  dragPlane.constant=-found.mesh.position.y;
+
+  // Mouse 3D hit at drag start
+  const hit=rayPlaneHit(dragPlane);
+  if(hit) dragHitPos.copy(hit); else dragHitPos.copy(dragStartPos);
+
+  // Determine pull direction: towards camera's side
+  // Project (camera - block) onto axis to get sign
+  const camDir=camera.position.clone().sub(dragStartPos);
+  dragSign=camDir.dot(dragAxis)>=0?1:-1;
+
+  // Clear hover
+  if(hovered){ hovered.mesh.material.emissive.setHex(0); hovered=null; }
+  found.mesh.material.emissive.setHex(0xffcc44);
+  found.mesh.material.emissiveIntensity=0.12;
+});
+
+renderer.domElement.addEventListener('mouseup',e=>{
+  if(e.button!==0||!dragging) return;
+  dragging=false;
+  orb.enabled=true;
+  renderer.domElement.style.cursor='default';
+
+  if(!dragBlock) return;
+  const b=dragBlock;
+  dragBlock=null;
+
+  // Threshold: pulled more than 80% of block length = extracted
+  if(dragProgress>BL*0.8){
+    extractBlock(b);
+  } else {
+    // Snap back
+    b.mesh.position.copy(dragStartPos);
+    b.mesh.material.emissive.setHex(0);
+    b.mesh.material.emissiveIntensity=0;
+    showMsg('Tirez plus loin pour retirer le bloc !');
+  }
+});
+
+// ─── EXTRACT & PLACE ─────────────────────────────────────
+function extractBlock(b){
+  b.alive=false;
+  heldBlock=b;
+  moves++;
+
+  // Park mesh off to the side (visible as "held")
+  b.mesh.position.set(3.5, TABLE_Y+0.5+BH/2, 0);
+  b.mesh.material.emissive.setHex(0xe8c040);
+  b.mesh.material.emissiveIntensity=0.5;
+
+  heldBadge.classList.add('show');
+  setPhase('PLACE');
+  showMsg('Bloc retiré ! Cliquez n\'importe où pour le poser en haut.',5000);
+}
+
+function doPlace(){
+  if(!heldBlock) return;
+  const b=heldBlock; heldBlock=null;
+  heldBadge.classList.remove('show');
+
+  const top=topRow();
+  const newRow=top+1;
+  const isEven=(newRow%2===0);
+
+  // Find a free slot in the new row
+  const takenSlots=new Set(blocks.filter(x=>x.alive&&x.row===newRow).map(x=>x.slot));
+  let freeSlot=null;
+  for(const s of [0,-1,1]){ if(!takenSlots.has(s)){freeSlot=s;break;} }
+  if(freeSlot===null) freeSlot=0;
+
+  const {x,y,z}=blockPos(newRow,freeSlot);
+
+  // Update block metadata
+  b.row=newRow; b.slot=freeSlot; b.isEven=isEven; b.alive=true;
+
+  // Rebuild mesh geometry if orientation changed
+  const gW=isEven?BL:BS, gD=isEven?BS:BL;
+  const newGeo=new THREE.BoxGeometry(gW,BH,gD);
+  b.mesh.geometry.dispose();
+  b.mesh.geometry=newGeo;
+  b.mesh.children.forEach(c=>c.geometry&&c.geometry.dispose());
+  b.mesh.clear();
+  b.mesh.add(new THREE.LineSegments(
+    new THREE.EdgesGeometry(newGeo),
+    new THREE.LineBasicMaterial({color:0x5a2e00,transparent:true,opacity:0.28})
+  ));
+
+  // Animate drop: start above, animate down
+  b.mesh.material.emissive.setHex(0);
+  b.mesh.material.emissiveIntensity=0;
+  b.mesh.position.set(x, y+1.5, z); // start above
+  b._dropTarget=y;
+  b._dropping=true;
+
+  setPhase('WAIT');
+  // Give it time to "drop" visually, then next turn
+  setTimeout(()=>{
+    b._dropping=false;
+    b.mesh.position.y=y;
+    endTurn();
+  },600);
+}
+
+function endTurn(){
+  if(gameOver) return;
+  player=(player%2)+1;
+  setPhase('PULL');
+  showMsg(`Tour du Joueur ${player}`,2500);
+}
+
+// ─── FALLING BLOCKS (tower collapse sim) ─────────────────
+// When game over, let blocks visually tumble
+function triggerCollapse(){
+  if(gameOver) return;
+  gameOver=true;
+  const winner=player===1?2:1;
+  goMsg.textContent=`JOUEUR ${winner} GAGNE !`;
+
+  // Launch all alive blocks as falling with random tumble
+  blocks.forEach(b=>{
+    if(!b.alive) return;
+    fallingMeshes.push({
+      mesh:b.mesh,
+      vy:Math.random()*2-0.5,
+      vx:(Math.random()-0.5)*3,
+      vz:(Math.random()-0.5)*3,
+      ax:(Math.random()-0.5)*0.08,
+      ay:(Math.random()-0.5)*0.08,
+      az:(Math.random()-0.5)*0.08,
+    });
+    b.alive=false;
+  });
+
+  setTimeout(()=>goScreen.classList.add('show'),1800);
+}
+
+// ─── CAMERA FOLLOW ───────────────────────────────────────
+let camTargetY=4;
+function trackCamera(){
+  const top=topRow();
+  const ideal=BASE_Y+top*BH*0.5+2.5;
+  camTargetY+=(ideal-camTargetY)*0.018;
+  orb.target.y+=(camTargetY-orb.target.y)*0.05;
+}
+
+// ─── RENDER LOOP ─────────────────────────────────────────
+const clock=new THREE.Clock();
+setPhase('PULL');
+showMsg('Clic + glisser pour tirer un bloc vers vous !',5000);
+
+function loop(){
+  requestAnimationFrame(loop);
+  const dt=Math.min(clock.getDelta(),0.05);
+
+  // Animate drop
+  blocks.forEach(b=>{
+    if(b._dropping&&b._dropTarget!==undefined){
+      b.mesh.position.y=Math.max(b.mesh.position.y-8*dt, b._dropTarget);
+    }
+  });
+
+  // Animate falling blocks (collapse)
+  fallingMeshes.forEach(f=>{
+    f.vy-=18*dt;
+    f.mesh.position.x+=f.vx*dt;
+    f.mesh.position.y+=f.vy*dt;
+    f.mesh.position.z+=f.vz*dt;
+    f.mesh.rotation.x+=f.ax;
+    f.mesh.rotation.y+=f.ay;
+    f.mesh.rotation.z+=f.az;
+  });
+
+  // Check if any alive block has been displaced too far (shouldn't happen
+  // with positional system, but detect manual shenanigans)
+  // Instead: detect if tower has no blocks in bottom half → game over
+  if(!gameOver){
+    const rowsWithBlocks=new Set(blocks.filter(b=>b.alive).map(b=>b.row));
+    // If gap in bottom rows (row 0-3 all missing = collapsed)
+    let bottomGone=true;
+    for(let r=0;r<4;r++){ if(rowsWithBlocks.has(r)){bottomGone=false;break;} }
+    if(bottomGone&&rowsWithBlocks.size>0) triggerCollapse();
+  }
+
+  trackCamera();
+  orb.update();
+  renderer.render(scene,camera);
+}
+loop();
+</script>
+</body>
+</html>
