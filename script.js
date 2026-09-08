@@ -118,7 +118,7 @@ const COLORS = [0xe8c87a, 0xd4a855, 0xc49040, 0xdfc070, 0xeba840, 0xcc9030];
 
 const objects = []; // { mesh, body, removed }
 
-function createBlock(x, y, z) {
+function createBlock(x, y, z, rotY = 0) {
   const mat = new THREE.MeshStandardMaterial({
     color: COLORS[Math.floor(Math.random()*COLORS.length)],
     roughness: 0.72, metalness: 0.04
@@ -136,6 +136,7 @@ function createBlock(x, y, z) {
   const body = new CANNON.Body({ mass: 0.4, material: defaultMat, linearDamping: 0.3, angularDamping: 0.6 });
   body.addShape(new CANNON.Box(new CANNON.Vec3(BW/2, BH/2, BD/2)));
   body.position.set(x, y, z);
+  body.quaternion.setFromEuler(0, rotY, 0);
   body.allowSleep = true;
   body.sleepSpeedLimit = 0.05;
   body.sleepTimeLimit = 0.5;
@@ -152,8 +153,8 @@ function buildTower() {
     const y = BASE_Y + row * (BH + GAP);
     for (let col = 0; col < 3; col++) {
       const offset = (col - 1) * (BD + GAP);
-      if (row % 2 === 0) createBlock(offset, y, 0);
-      else createBlock(0, y, offset);
+      if (row % 2 === 0) createBlock(offset, y, 0, 0);
+      else createBlock(0, y, offset, Math.PI/2);
     }
   }
 }
